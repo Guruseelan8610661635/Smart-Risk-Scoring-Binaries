@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Risk-Scoring Dashboard - SOC/DFIR</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            transition: background-color 0.3s, color 0.3s; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            position: relative; 
+            overflow-x: hidden; 
+        }
+        .dark-mode { 
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%); 
+            color: #ecf0f1; 
+        }
+        /* Updated Glassmorphism for Better Contrast */
+        .glass-card { 
+            background: rgba(255, 255, 255, 0.15); 
+            backdrop-filter: blur(10px); 
+            border: 1px solid rgba(255, 255, 255, 0.3); 
+            border-radius: 15px; 
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1); 
+            transition: transform 0.3s, box-shadow 0.3s; 
+        }
+        .glass-card:hover { 
+            transform: translateY(-5px) scale(1.02); 
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2); 
+        }
+        .dark-mode .glass-card { 
+            background: rgba(52, 73, 94, 0.4); 
+            border: 1px solid rgba(255, 255, 255, 0.2); 
+        }
+        /* Enhanced Heading Visibility */
+        .card-header {
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); 
+            color: #ffffff !important; 
+            font-weight: bold;
+        }
+        .dark-mode .card-header {
+            text-shadow: 0 1px 3px rgba(255, 255, 255, 0.3); 
+        }
+        /* Ensure other text elements are readable */
+        .card-body p, .card-body li {
+            color: rgba(0, 0, 0, 0.8);
+        }
+        .dark-mode .card-body p, .dark-mode .card-body li {
+            color: rgba(255, 255, 255, 0.9);
+        }
+        /* Particle Background */
+        .particles { 
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            pointer-events: none; 
+            z-index: -1; 
+        }
+        .particle { 
+            position: absolute; 
+            background: rgba(255, 255, 255, 0.5); 
+            border-radius: 50%; 
+            animation: float 6s infinite ease-in-out; 
+        }
+        @keyframes float { 
+            0%, 100% { transform: translateY(0px) rotate(0deg); opacity: 0.5; } 
+            50% { transform: translateY(-20px) rotate(180deg); opacity: 1; } 
+        }
+        /* Animated Counters */
+        .stat-counter { 
+            font-size: 2rem; 
+            font-weight: bold; 
+            color: #3498db; 
+            transition: color 0.3s; 
+        }
+        .dark-mode .stat-counter { color: #ecf0f1; }
+        /* Ripple Effect */
+        .ripple { 
+            position: relative; 
+            overflow: hidden; 
+        }
+        .ripple::before { 
+            content: ''; 
+            position: absolute; 
+            top: 50%; left: 50%; 
+            width: 0; height: 0; 
+            border-radius: 50%; 
+            background: rgba(255, 255, 255, 0.5); 
+            transform: translate(-50%, -50%); 
+            transition: width 0.6s, height 0.6s; 
+        }
+        .ripple:active::before { 
+            width: 300px; height: 300px; 
+        }
+        /* Typing Animation for Alerts */
+        .typing { 
+            border-right: 2px solid #3498db; 
+            animation: blink 1s infinite; 
+        }
+        @keyframes blink { 0%, 50% { border-color: transparent; } 51%, 100% { border-color: #3498db; } }
+        /* Glowing Alerts */
+        .alert-item.glow { 
+            box-shadow: 0 0 10px rgba(255, 193, 7, 0.5); 
+            animation: glowPulse 2s infinite; 
+        }
+        @keyframes glowPulse { 0%, 100% { box-shadow: 0 0 10px rgba(255, 193, 7, 0.5); } 50% { box-shadow: 0 0 20px rgba(255, 193, 7, 0.8); } }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .tooltip-inner { background-color: #000; }
+        .loading { display: none; color: #3498db; }
+        .dark-mode .loading { color: #ecf0f1; }
+    </style>
+</head>
+<body class="container-fluid p-3 fade-in">
+    <!-- Particle Background -->
+    <div class="particles" id="particles"></div>
+
+    <header class="d-flex justify-content-between align-items-center mb-4 glass-card p-3">
+        <h1 style="color: #00FFFF;"><i class="fas fa-shield-alt"></i> Smart Risk-Scoring Dashboard</h1>
+        <div>
+            <div id="liveClock" class="text-light mb-2" style="font-size: 1.2rem; font-weight: bold;"></div>
+            <span class="badge bg-success"><i class="fas fa-check-circle"></i> All Systems Operational</span>
+            <button id="darkModeToggle" class="btn btn-outline-secondary ms-2 ripple" data-bs-toggle="tooltip" title="Toggle Dark Mode"><i class="fas fa-moon"></i></button>
+        </div>
+    </header>
+
+    <!-- Report Upload Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card glass-card">
+                <div class="card-header bg-info text-white"><i class="fas fa-upload"></i> Upload & Analyze Report</div>
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <div class="input-group">
+                                <input type="file" class="form-control" id="reportFileInput" accept=".json" placeholder="Select report.json file">
+                                <button class="btn btn-primary ripple" id="uploadBtn" onclick="uploadReport()">
+                                    <i class="fas fa-cloud-upload-alt"></i> Upload & Analyze
+                                </button>
+                            </div>
+                            <small class="text-muted d-block mt-2">Supported format: JSON report files</small>
+                            <small class="text-muted d-block" id="backendStatus">
+                                <i class="fas fa-spinner fa-spin"></i> Checking backend connection...
+                            </small>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div id="uploadStatus" class="alert alert-info d-none" role="alert"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analysis Results Section (Hidden by default) -->
+    <div class="row mb-4" id="analysisResultsSection" style="display: none;">
+        <div class="col-12">
+            <div class="card glass-card">
+                <div class="card-header bg-success text-white"><i class="fas fa-check-circle"></i> Analysis Results</div>
+                <div class="card-body">
+                    <div id="analysisResultsContent">
+                        <!-- Results will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats Row with Animated Counters -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card glass-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-file-signature fa-2x text-success"></i>
+                    <h5>Signed Binaries</h5>
+                    <div class="stat-counter" id="signedCount" data-target="350">0</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card glass-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-exclamation-triangle fa-2x text-warning"></i>
+                    <h5>Unsigned Binaries</h5>
+                    <div class="stat-counter" id="unsignedCount" data-target="150">0</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card glass-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-clock fa-2x text-info"></i>
+                    <h5>Avg Response Time</h5>
+                    <div class="stat-counter">5.2m</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card glass-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-bell fa-2x text-danger"></i>
+                    <h5>Active Alerts</h5>
+                    <div class="stat-counter" id="alertCount" data-target="3">0</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Binary Status Overview -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card glass-card">
+                <div class="card-header bg-primary text-white"><i class="fas fa-chart-pie"></i> Binary Status Overview</div>
+                <div class="card-body">
+                    <canvas id="binaryChart" data-bs-toggle="tooltip" title="Click segments for details"></canvas>
+                    <p class="mt-2 text-muted">Signed: 70% (350) | Unsigned: 30% (150)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trust Score Visualization -->
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="card glass-card">
+                <div class="card-header bg-success text-white"><i class="fas fa-chart-bar"></i> Trust Scores</div>
+                <div class="card-body">
+                    <canvas id="trustChart" data-bs-toggle="tooltip" title="Hover for risk breakdown"></canvas>
+                    <p class="mt-2 text-muted">Low Risk: 60% | High Risk: 40%</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Historical Activity -->
+        <div class="col-lg-4 col-md-12 mb-4">
+            <div class="card glass-card">
+                <div class="card-header bg-info text-white"><i class="fas fa-chart-line"></i> Historical Activity (Last 7 Days)</div>
+                <div class="card-body">
+                    <canvas id="historyChart" data-bs-toggle="tooltip" title="Track trends over time"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Recent Alerts with Typing Animation -->
+        <div class="col-lg-6 mb-4">
+            <div class="card glass-card">
+                <div class="card-header d-flex justify-content-between bg-warning text-dark">
+                    <span><i class="fas fa-bell"></i> Recent Alerts</span>
+                    <div>
+                        <input type="text" id="alertSearch" class="form-control form-control-sm d-inline w-50 me-2" placeholder="Search alerts...">
+                        <select id="alertFilter" class="form-select form-select-sm d-inline w-25">
+                            <option value="">All Severities</option>
+                            <option value="Critical">Critical</option>
+                            <option value="High">High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                        <button id="refreshAlerts" class="btn btn-sm btn-primary ms-2 ripple" data-bs-toggle="tooltip" title="Refresh Alerts"><i class="fas fa-sync"></i></button>
+                        <span id="loadingSpinner" class="loading ms-2"><i class="fas fa-spinner fa-spin"></i> Loading...</span>
+                    </div>
+                </div>
+                <div class="card-body" id="alertsList">
+                    <!-- Alerts populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Analytics -->
+        <div class="col-lg-6 mb-4">
+            <div class="card glass-card">
+                <div class="card-header bg-secondary text-white"><i class="fas fa-chart-area"></i> Summary Analytics</div>
+                <div class="card-body">
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item"><strong>Mean Response Time:</strong> 5.2 minutes</li>
+                        <li class="list-group-item"><strong>Suspicious Binaries:</strong> 45% (flagged for malware)</li>
+                        <li class="list-group-item"><strong>Verified Binaries:</strong> 55% (auto-signed)</li>
+                    </ul>
+                    <div class="mt-3">
+                        <button class="btn btn-outline-primary me-2 ripple" onclick="exportReport('CSV')" data-bs-toggle="tooltip" title="Download as CSV"><i class="fas fa-download"></i> Export CSV</button>
+                        <button class="btn btn-outline-success ripple" onclick="exportReport('PDF')" data-bs-toggle="tooltip" title="Download as PDF"><i class="fas fa-file-pdf"></i> Export PDF</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Enhanced Modal for Alert Details -->
+    <div class="modal fade" id="alertModal" tabindex="-1" aria-labelledby="alertModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content glass-card">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="alertModalLabel"><i class="fas fa-info-circle"></i> Alert Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="alertDetails">
+                    <!-- Details populated on click -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary ripple" data-bs-dismiss="modal"><i class="fas fa-times"></i> Close</button>
+                    <button type="button" class="btn btn-primary ripple" onclick="takeAction('investigate')"><i class="fas fa-search"></i> Investigate</button>
+                    <button type="button" class="btn btn-danger ripple" onclick="takeAction('quarantine')"><i class="fas fa-ban"></i> Quarantine</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Initialize tooltips
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) { return new bootstrap.Tooltip(tooltipTriggerEl); });
+
+        // Dark Mode Toggle
+        document.getElementById('darkModeToggle').addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            tooltipList.forEach(t => t.dispose());
+            tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) { return new bootstrap.Tooltip(tooltipTriggerEl); });
+        });
+
+        // Generate Particles
+        function createParticles() {
+            const particlesContainer = document.getElementById('particles');
+            for (let i = 0; i < 50; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.top = Math.random() * 100 + '%';
+                particle.style.animationDelay = Math.random() * 6 + 's';
+                particle.style.width = particle.style.height = Math.random() * 5 + 2 + 'px';
+                particlesContainer.appendChild(particle);
+            }
+        }
+        createParticles();
+
+        // Animated Counters
+        function animateCounters() {
+            const counters = document.querySelectorAll('.stat-counter[data-target]');
+            counters.forEach(counter => {
+                const target = +counter.getAttribute('data-target');
+                const increment = target / 100;
+                let current = 0;
+                const timer = setInterval(() => {
+                    current += increment;
+                    if (current >= target) {
+                        counter.textContent = target;
+                        clearInterval(timer);
+                    } else {
+                        counter.textContent = Math.ceil(current);
+                    }
+                }, 30);
+            });
+        }
+        animateCounters();
+
+        // Report Upload and Analysis Functions
+        const API_URL = 'http://localhost:8080/api/analyze-report';
+
+        function uploadReport() {
+            const fileInput = document.getElementById('reportFileInput');
+            const file = fileInput.files[0];
+            const uploadStatus = document.getElementById('uploadStatus');
+            const uploadBtn = document.getElementById('uploadBtn');
+
+            if (!file) {
+                showStatus(uploadStatus, 'Please select a file', 'danger');
+                return;
+            }
+
+            if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+                showStatus(uploadStatus, 'Please select a valid JSON file', 'danger');
+                return;
+            }
+
+            // Show loading status
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+            showStatus(uploadStatus, 'Uploading and analyzing report...', 'info');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // Send to backend with error handling
+            fetch(API_URL, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    // Don't set Content-Type header - browser will set it with boundary
+                }
+            })
+            .then(response => {
+                // Check if response is OK
+                if (!response.ok) {
+                    if (response.status === 0) {
+                        throw new Error('Cannot connect to backend. Make sure it\'s running on http://localhost:8080');
+                    }
+                    return response.text().then(text => {
+                        throw new Error(`Server returned ${response.status}: ${text || response.statusText}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Check if response contains an error
+                if (data.error) {
+                    throw new Error(data.message || 'Analysis failed');
+                }
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload & Analyze';
+                showStatus(uploadStatus, 'Report analyzed successfully!', 'success');
+                displayAnalysisResults(data);
+            })
+            .catch(error => {
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Upload & Analyze';
+                console.error('Error:', error);
+                
+                // Provide helpful error messages
+                let errorMsg = error.message;
+                if (errorMsg.includes('Failed to fetch')) {
+                    errorMsg = 'Cannot connect to backend. Is it running on http://localhost:8080? Check the backend server logs.';
+                } else if (errorMsg.includes('CORS')) {
+                    errorMsg = 'CORS error. Backend may need to be restarted.';
+                }
+                
+                showStatus(uploadStatus, `Error: ${errorMsg}`, 'danger');
+            });
+        }
+
+        function showStatus(element, message, type) {
+            element.textContent = message;
+            element.className = `alert alert-${type}`;
+            element.classList.remove('d-none');
+        }
+
+        function displayAnalysisResults(data) {
+            const resultsSection = document.getElementById('analysisResultsSection');
+            const resultsContent = document.getElementById('analysisResultsContent');
+
+            // Build HTML for results
+            let html = '<div class="row">';
+
+            // Summary metrics
+            html += '<div class="col-md-6 mb-3">';
+            html += '<h6 class="font-weight-bold"><i class="fas fa-chart-bar"></i> Summary</h6>';
+            html += '<ul class="list-group list-group-flush">';
+            html += `<li class="list-group-item"><strong>File Name:</strong> ${data.filename || 'Unknown'}</li>`;
+            html += `<li class="list-group-item"><strong>Binary ID:</strong> ${data.binaryId || 'N/A'}</li>`;
+            html += `<li class="list-group-item"><strong>Trust Score:</strong> <span class="badge bg-info">${(data.trustScore || 0).toFixed(2)}</span></li>`;
+            html += `<li class="list-group-item"><strong>Risk Level:</strong> <span class="badge ${getRiskBadgeClass(data.riskLevel || 'Unknown')}">${data.riskLevel || 'Unknown'}</span></li>`;
+            html += '</ul>';
+            html += '</div>';
+
+            // File details
+            html += '<div class="col-md-6 mb-3">';
+            html += '<h6 class="font-weight-bold"><i class="fas fa-file"></i> File Details</h6>';
+            html += '<ul class="list-group list-group-flush">';
+            html += `<li class="list-group-item"><strong>File Size:</strong> ${formatFileSize(data.fileSize || 0)}</li>`;
+            html += `<li class="list-group-item"><strong>SHA-256:</strong> <code style="font-size: 0.75rem;">${(data.sha256 || 'N/A').substring(0, 32)}...</code></li>`;
+            html += `<li class="list-group-item"><strong>Entropy:</strong> ${(data.entropy || 0).toFixed(4)}</li>`;
+            html += `<li class="list-group-item"><strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString()}</li>`;
+            html += '</ul>';
+            html += '</div>';
+
+            html += '</div>';
+
+            // Analysis Details
+            if (data.analysis) {
+                html += '<div class="row mt-3">';
+                html += '<div class="col-12">';
+                html += '<h6 class="font-weight-bold"><i class="fas fa-microscope"></i> Analysis Details</h6>';
+                html += '<pre style="background-color: rgba(0,0,0,0.1); padding: 10px; border-radius: 5px; overflow-x: auto; max-height: 300px;">';
+                html += JSON.stringify(data.analysis, null, 2);
+                html += '</pre>';
+                html += '</div>';
+                html += '</div>';
+            }
+
+            // Alerts if any
+            if (data.alerts && data.alerts.length > 0) {
+                html += '<div class="row mt-3">';
+                html += '<div class="col-12">';
+                html += '<h6 class="font-weight-bold"><i class="fas fa-exclamation-triangle"></i> Detected Issues</h6>';
+                html += '<div class="list-group">';
+                data.alerts.forEach(alert => {
+                    html += `<div class="list-group-item"><span class="badge ${getSeverityBadgeClass(alert.severity)}">${alert.severity}</span> ${alert.message}</div>`;
+                });
+                html += '</div>';
+                html += '</div>';
+                html += '</div>';
+            }
+
+            resultsContent.innerHTML = html;
+            resultsSection.style.display = 'block';
+        }
+
+        function getRiskBadgeClass(risk) {
+            switch (risk.toLowerCase()) {
+                case 'critical':
+                    return 'bg-danger';
+                case 'high':
+                    return 'bg-warning text-dark';
+                case 'medium':
+                    return 'bg-info';
+                case 'low':
+                    return 'bg-success';
+                default:
+                    return 'bg-secondary';
+            }
+        }
+
+        function getSeverityBadgeClass(severity) {
+            switch (severity.toLowerCase()) {
+                case 'critical':
+                    return 'bg-danger';
+                case 'high':
+                    return 'bg-warning text-dark';
+                case 'medium':
+                    return 'bg-info';
+                case 'low':
+                    return 'bg-success';
+                default:
+                    return 'bg-secondary';
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Live Clock Update
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('liveClock').textContent = now.toLocaleTimeString();
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Backend Health Check
+        function checkBackendConnection() {
+            const statusEl = document.getElementById('backendStatus');
+            fetch('http://localhost:8080/api/health', {
+                method: 'GET',
+                mode: 'cors'
+            })
+            .then(response => {
+                if (response.ok) {
+                    statusEl.innerHTML = '<i class="fas fa-check-circle" style="color: green;"></i> Backend connected';
+                    return;
+                }
+                statusEl.innerHTML = '<i class="fas fa-exclamation-circle" style="color: orange;"></i> Backend unreachable';
+            })
+            .catch(error => {
+                statusEl.innerHTML = '<i class="fas fa-times-circle" style="color: red;"></i> Backend unavailable - Is it running on port 8080?';
+                console.warn('Backend connection check failed:', error);
+            });
+        }
+
+        // Check backend on page load
+        setTimeout(checkBackendConnection, 1000);
+    </script>
+</body>
+</html>
