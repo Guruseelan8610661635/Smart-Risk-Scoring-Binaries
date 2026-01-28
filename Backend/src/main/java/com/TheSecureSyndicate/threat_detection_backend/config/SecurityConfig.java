@@ -12,8 +12,9 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable())  // Disable CSRF so POST requests work
-            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll()); // allow all endpoints
+            .cors(Customizer.withDefaults())
+            .csrf(csrf -> csrf.disable())
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
 
         return http.build();
     }
