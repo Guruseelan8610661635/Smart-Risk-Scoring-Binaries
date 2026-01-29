@@ -12,6 +12,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
+import com.TheSecureSyndicate.threat_detection_backend.service.MLScoringService;
+import com.TheSecureSyndicate.threat_detection_backend.dto.MLResponse;
+import com.TheSecureSyndicate.threat_detection_backend.model.BinaryFile;
+import com.TheSecureSyndicate.threat_detection_backend.model.YaraResult;
 
 @RestController
 @RequestMapping("/api")
@@ -20,6 +24,11 @@ public class ReportAnalysisController {
 
     private static final Logger logger = LoggerFactory.getLogger(ReportAnalysisController.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final MLScoringService mlScoringService;
+
+    public ReportAnalysisController(MLScoringService mlScoringService) {
+        this.mlScoringService = mlScoringService;
+    }
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, String>> health() {
@@ -63,13 +72,64 @@ public class ReportAnalysisController {
             // Add full analysis data
             response.put("analysis", reportNode);
 
-            // Calculate risk level based on alerts
-            String riskLevel = calculateRiskLevel(alerts);
-            response.put("riskLevel", riskLevel);
+            // Try to build BinaryFile and YaraResult from report where possible
+            BinaryFile binary = new BinaryFile();
+            binary.setFileName(fileName);
+            binary.setSize(file.getSize());
+            if (reportNode.has("entropy")) binary.setEntropy(reportNode.get("entropy").asDouble(0.0));
+            if (reportNode.has("sha256")) binary.setHash(reportNode.get("sha256").asText(null));
+            if (reportNode.has("malscore")) binary.setCuckooScore(reportNode.get("malscore").asDouble());
 
-            // Calculate trust score
-            double trustScore = calculateTrustScore(reportNode, alerts);
-            response.put("trustScore", trustScore);
+            YaraResult yaraResult = new YaraResult();
+            yaraResult.setMatched(false);
+            StringBuilder matched = new StringBuilder();
+            if (reportNode.has("signatures") && reportNode.get("signatures").isArray()) {
+                for (JsonNode s : reportNode.get("signatures")) {
+                    if (s.has("name")) {
+                        if (matched.length()>0) matched.append("\n");
+                        matched.append(s.get("name").asText());
+                    }
+                }
+            } else if (reportNode.has("yara") && reportNode.get("yara").has("rules")) {
+                JsonNode rules = reportNode.get("yara").get("rules");
+                if (rules.isArray()) {
+                    for (JsonNode r : rules) {
+                        if (matched.length()>0) matched.append("\n");
+                        matched.append(r.asText());
+                    }
+                }
+            }
+            if (matched.length() > 0) {
+                yaraResult.setMatched(true);
+                yaraResult.setMatchedRules(matched.toString());
+            }
+
+            // Call ML scoring service (best-effort)
+            MLResponse mlResponse = null;
+            try {
+                mlResponse = mlScoringService.scoreBinary(binary, yaraResult);
+                response.put("mlScore", mlResponse);
+            } catch (Exception e) {
+                logger.warn("ML scoring failed: {}", e.getMessage());
+            }
+
+            // Calculate trust score first (base from heuristics)
+            double baseTrustScore = calculateTrustScore(reportNode, alerts);
+
+            // If ML result available, combine ML risk into trust score
+            double finalTrustScore = baseTrustScore;
+            if (mlResponse != null) {
+                // mlResponse.riskScore is 0..1 where higher=more risky; convert to a trust-like 0..100 (higher=more trusted)
+                double mlTrust = Math.max(0.0, Math.min(100.0, (1.0 - mlResponse.getRiskScore()) * 100.0));
+                // Weighted combination: 60% base heuristics, 40% ML
+                finalTrustScore = Math.max(0.0, Math.min(100.0, baseTrustScore * 0.6 + mlTrust * 0.4));
+            }
+
+            response.put("trustScore", finalTrustScore);
+
+            // Calculate risk level based on both alerts and trust score
+            String riskLevel = calculateRiskLevel(alerts, finalTrustScore);
+            response.put("riskLevel", riskLevel);
 
             logger.info("Successfully analyzed report: {}", fileName);
             return ResponseEntity.ok(response);
@@ -179,11 +239,31 @@ public class ReportAnalysisController {
         return alert;
     }
 
-    private String calculateRiskLevel(List<Map<String, String>> alerts) {
+    private String calculateRiskLevel(List<Map<String, String>> alerts, double trustScore) {
+        // Risk level based on trust score (primary factor)
+        // Trust Score mapping:
+        // 0-30: Critical
+        // 31-50: High
+        // 51-70: Medium
+        // 71-100: Low
+        
+        String riskFromTrustScore;
+        if (trustScore <= 30) {
+            riskFromTrustScore = "Critical";
+        } else if (trustScore <= 50) {
+            riskFromTrustScore = "High";
+        } else if (trustScore <= 70) {
+            riskFromTrustScore = "Medium";
+        } else {
+            riskFromTrustScore = "Low";
+        }
+        
+        // If no alerts, return risk based on trust score
         if (alerts.isEmpty()) {
-            return "Low";
+            return riskFromTrustScore;
         }
 
+        // Count critical and high severity alerts
         int criticalCount = 0;
         int highCount = 0;
 
@@ -196,19 +276,57 @@ public class ReportAnalysisController {
             }
         }
 
+        // Determine risk from alerts
+        String riskFromAlerts;
         if (criticalCount > 0) {
-            return "Critical";
+            riskFromAlerts = "Critical";
         } else if (highCount >= 2) {
-            return "High";
+            riskFromAlerts = "High";
         } else if (highCount > 0 || alerts.size() >= 3) {
-            return "Medium";
+            riskFromAlerts = "Medium";
         } else {
-            return "Low";
+            riskFromAlerts = "Low";
+        }
+
+        // Combine both factors - take the higher risk
+        return compareRiskLevels(riskFromAlerts, riskFromTrustScore);
+    }
+
+    private String compareRiskLevels(String riskFromAlerts, String riskFromTrustScore) {
+        // Risk severity order: Critical > High > Medium > Low
+        int alertsRiskValue = getRiskValue(riskFromAlerts);
+        int trustRiskValue = getRiskValue(riskFromTrustScore);
+        
+        return alertsRiskValue >= trustRiskValue ? riskFromAlerts : riskFromTrustScore;
+    }
+
+    private int getRiskValue(String risk) {
+        switch(risk.toLowerCase()) {
+            case "critical":
+                return 4;
+            case "high":
+                return 3;
+            case "medium":
+                return 2;
+            case "low":
+            default:
+                return 1;
         }
     }
 
     private double calculateTrustScore(JsonNode reportNode, List<Map<String, String>> alerts) {
         double score = 100.0; // Start with 100
+
+        // Check for digital signatures
+        JsonNode staticNode = reportNode.path("static");
+        JsonNode peNode = staticNode.path("pe");
+        JsonNode digitalSigners = peNode.path("digital_signers");
+        
+        // If file is not digitally signed, significantly deduct from trust score
+        if (digitalSigners.isNull() || digitalSigners.isMissingNode() || 
+            (digitalSigners.isArray() && digitalSigners.size() == 0)) {
+            score -= 30; // Major deduction for unsigned files
+        }
 
         // Deduct points for each alert
         for (Map<String, String> alert : alerts) {

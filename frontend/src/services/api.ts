@@ -8,7 +8,7 @@ export const uploadFile = async (file: File): Promise<AnalysisResult> => {
   formData.append('file', file);
 
   const response = await axios.post<AnalysisResult>(
-    `${API_BASE_URL}/upload`,
+    `${API_BASE_URL}/analyze-report`,
     formData,
     {
       headers: {
